@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="da">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LeadBeregner Research Generator</title>
+    <style>
+      body { margin: 0; font-family: Inter, system-ui, sans-serif; background:#0b1020; color:#e7ecff; }
+      .wrap { max-width: 1200px; margin:0 auto; padding:24px; }
+      .card { background:#141b34; border:1px solid #27315a; border-radius:12px; padding:16px; margin-bottom:16px; }
+      .row { display:flex; flex-wrap:wrap; gap:10px; align-items:end; }
+      input { min-width:280px; padding:10px; border-radius:8px; border:1px solid #3a487e; background:#0f1530; color:#fff; }
+      button { padding:10px 14px; border:none; border-radius:8px; background:#3f66ff; color:#fff; font-weight:700; cursor:pointer; }
+      button:disabled { opacity:.6; cursor:wait; }
+      .grid { display:grid; grid-template-columns:1fr; gap:12px; }
+      @media(min-width:1000px){ .grid{grid-template-columns:1fr 1fr;} }
+      textarea { width:100%; min-height:420px; padding:10px; border-radius:8px; background:#0d1329; color:#dce6ff; border:1px solid #354470; font-family: ui-monospace, monospace; font-size:12px; }
+      .status { font-size: 14px; opacity: .9; margin-top:8px; }
+      .status.ok { color:#8ff7a8; }
+      .status.err { color:#ff9b9b; }
+      .help { font-size: 12px; opacity: .85; margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>LeadBeregner — SEO JSON generator med research</h1>
+      <div class="card">
+        <div class="row">
+          <div>
+            <label for="keyword">Søgeord / branche</label><br />
+            <input id="keyword" placeholder="fx varmepumpe" />
+          </div>
+          <div>
+            <label for="apiBase">API base URL (valgfri)</label><br />
+            <input id="apiBase" placeholder="fx http://localhost:4173" />
+          </div>
+          <button id="generate">Undersøg søgeord + generér JSON</button>
+        </div>
+        <div class="help">Virker også som lokal fil (file://). Hvis API fejler/CORS blokeres, bruges indbygget fallback-generator automatisk.</div>
+        <div id="status" class="status">Klar.</div>
+      </div>
+      <div class="card">
+        <h3>Research-fund (bruges i teksterne)</h3>
+        <textarea id="research"></textarea>
+      </div>
+      <div class="grid">
+        <div class="card">
+          <h3>1) Content Bank JSON</h3>
+          <textarea id="contentBank"></textarea>
+        </div>
+        <div class="card">
+          <h3>2) Problem Page Templates JSON</h3>
+          <textarea id="problemPages"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const statusEl = document.getElementById('status');
+      const btn = document.getElementById('generate');
+      const REGIONS = {
+        'København': { faktor: 1.2, label: '+20%', note: 'Højere arbejdsløn og adgangsforhold' },
+        'Nordsjælland': { faktor: 1.15, label: '+15%', note: 'Tæt på København' },
+        'Østsjælland': { faktor: 1.1, label: '+10%', note: 'Forstadsområder' },
+        'Vestsjælland': { faktor: 1.0, label: '±0%', note: 'Gennemsnitligt prisniveau' },
+        'Fyn': { faktor: 1.0, label: '±0%', note: 'Gennemsnitligt prisniveau' },
+        'Østjylland': { faktor: 1.0, label: '±0%', note: 'Gennemsnitligt prisniveau' },
+        'Midtjylland': { faktor: 0.95, label: '-5%', note: 'Lidt lavere priser' },
+        'Nordjylland': { faktor: 0.95, label: '-5%', note: 'Lavere arbejdsløn' },
+        'Sønderjylland': { faktor: 0.95, label: '-5%', note: 'Grænseområde' }
+      };
+
+      const domainFacts = (keyword) => {
+        const k = keyword.toLowerCase();
+        if (k.includes('varmepumpe')) return [
+          'Pris afhænger af type (luft-til-luft, luft-til-vand, jordvarme), kapacitet og installationskompleksitet.',
+          'Dimensionering efter boligens varmebehov er afgørende for driftøkonomi og komfort.',
+          'El-arbejde, rørføring og eventuelle fundamentløsninger påvirker slutprisen.',
+          'Ved varmepumper skal man medregne serviceaftale, støjkrav og placering i forhold til naboer.'
+        ];
+        if (k.includes('solceller')) return [
+          'Pris påvirkes af paneltype, inverter, taghældning og montagesystem.',
+          'El-tilslutning, tavlearbejde og dokumentation udgør en væsentlig del af totalprisen.',
+          'Skyggeforhold og orientering ændrer anlæggets ydelse og tilbagebetalingstid.',
+          'Batteriløsning øger investeringen, men kan forbedre egenforbrug markant.'
+        ];
+        if (k.includes('hegn')) return [
+          'Pris afhænger af længde, materialevalg, stolpefundament og terræn.',
+          'Adgangsforhold og bortkørsel af gammelt hegn kan påvirke timetal markant.',
+          'Lokale regler for højde, afstand og udtryk kan kræve særlige løsninger.',
+          'Ved kystnære områder bør man vælge materialer med høj modstand mod vind og fugt.'
+        ];
+        return [
+          `Pris for ${keyword} påvirkes af omfang, materialer, adgangsforhold og kvalitetsniveau.`,
+          `${keyword} kræver præcis opmåling og tydeligt scope for at undgå ekstraomkostninger.`,
+          `Sammenlignelige tilbud på ${keyword} kræver samme forudsætninger for materialer og udførsel.`,
+          `Ved ${keyword} bør man medregne både etablering, tillæg og fremtidigt vedligehold.`
+        ];
+      };
+
+      const slugify = (s) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      const titleCase = (s) => s.split(' ').filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+
+      function inferPricing(keyword) {
+        const k = keyword.toLowerCase();
+        if (k.includes('maler') || k.includes('maling')) return { enhed: 'pr. m²', enhed_kort: 'm²', low: 90, high: 220 };
+        if (k.includes('vvs') || k.includes('elektriker')) return { enhed: 'pr. time', enhed_kort: 'time', low: 550, high: 1100 };
+        if (k.includes('hegn') || k.includes('solceller') || k.includes('varmepumpe') || k.includes('tag')) return { enhed: 'pr. m²', enhed_kort: 'm²', low: 400, high: 1400 };
+        return { enhed: 'pr. enhed', enhed_kort: 'enhed', low: 350, high: 1200 };
+      }
+
+      function localGenerate(keyword) {
+        const slug = slugify(keyword);
+        const name = titleCase(keyword);
+        const pricing = inferPricing(keyword);
+        const facts = domainFacts(keyword);
+        const types = [1, 1.35, 1.7, 2.1].map((m, i) => ({
+          id: `${slug}-${['basis','standard','premium','special'][i]}`,
+          navn: `${name} ${['Basis','Standard','Premium','Special'][i]} løsning`,
+          pris_pr_enhed_low: Math.round(pricing.low * m),
+          pris_pr_enhed_high: Math.round(pricing.high * m),
+          pris_standardprojekt_low: Math.round(pricing.low * m * 30),
+          pris_standardprojekt_high: Math.round(pricing.high * m * 40),
+          standardprojekt_beskrivelse: `Standardprojekt for ${name}.`,
+          levetid: `${8 + i * 4}–${15 + i * 5} år`,
+          beskrivelse: facts[i] || facts[0],
+          fordele: ['Dokumenteret løsning', 'Forudsigelig pris', 'Tilpasses projektet'],
+          ulemper: ['Afhænger af lokale forhold', 'Kræver korrekt opmåling'],
+          vedligeholdelse: i > 1 ? 'Lav' : 'Middel',
+          populaer: i === 1
+        }));
+
+        const regionale_indholdsblokke = Object.fromEntries(Object.keys(REGIONS).map((r, idx) => [r, {
+          lokale_forhold_tekst: `I ${r} påvirkes ${keyword}-projekter af lokale boligtyper, adgangsforhold og entreprenørkapacitet. ${facts[idx % facts.length]}`,
+          typisk_projekt: `Typisk projekt i ${r}: mellemstort ${keyword}-projekt med fokus på holdbarhed og logistik.`,
+          saerlige_overvejelser: `Afklar i ${r} lokalplaner, naboforhold og adgang før opstart.`,
+          priskommentar: `Prisniveauet i ${r} ligger typisk ${REGIONS[r].label} i forhold til landsgennemsnittet pga. ${REGIONS[r].note.toLowerCase()}.`
+        }]));
+
+        const contentBank = {
+          branche: {
+            id: slug, navn: name, slug, kategori: 'Håndværker',
+            meta: {
+              title_template: `${name} pris {BY} — Hvad koster ${keyword} i 2026? | LeadBeregner`,
+              title_template_pillar: `Hvad koster ${keyword} i 2026? Priser, typer og beregner | LeadBeregner`,
+              title_template_problem: '{PROBLEM_TITLE} — Priser og guide 2026 | LeadBeregner',
+              meta_description_template: `Se hvad ${keyword} koster i {BY} i 2026. {TYPE_POPULAER} fra {PRIS_REGIONSJUSTERET_LOW} kr/${pricing.enhed_kort}. Beregn din pris på 2 min.`,
+              meta_description_pillar: `Komplet guide til ${keyword}-priser i 2026. Beregn din pris gratis.`,
+              opdateret: '2026-03-01'
+            }
+          },
+          prisdata: {
+            valuta: 'DKK', moms_inkluderet: false, enhed: pricing.enhed, enhed_kort: pricing.enhed_kort, prisaar: 2026,
+            kilde_note: `Lokal fallback-research for ${keyword} (${new Date().toISOString().slice(0, 10)}).`,
+            typer: types,
+            tillaegsydelser: [
+              { id: 'opmaaling', navn: 'Opmåling og plan', pris_low: 1000, pris_high: 3000, beskrivelse: 'Præcis opmåling og projektplan.' },
+              { id: 'bortskaffelse', navn: 'Bortskaffelse', pris_low: 1200, pris_high: 4500, beskrivelse: 'Bortskaffelse af eksisterende materialer.' },
+              { id: 'hastetid', navn: 'Hasteopstart', pris_low: 1500, pris_high: 7000, beskrivelse: 'Prioriteret opstart ved kort deadline.' }
+            ],
+            prisgrupper: REGIONS
+          },
+          regionale_indholdsblokke,
+          by_kategorier: {
+            storby: { definition: 'Byer med 50.000+ indbyggere', prisscenarier: [{ titel: 'Lille projekt', beskrivelse: 'Mindre opgave i tæt bymiljø.', detaljer: 'Storby', pris_low: 12000, pris_high: 26000 }, { titel: 'Mellemstort projekt', beskrivelse: 'Typisk opgave i rækkehus/parcelmiljø.', detaljer: 'Storby', pris_low: 28000, pris_high: 52000 }, { titel: 'Stort projekt', beskrivelse: 'Større kompleks opgave.', detaljer: 'Storby', pris_low: 55000, pris_high: 110000 }], ekstra_sektioner: ['parkering_adgang', 'grundejerforening'], intro_variant_pool: 'A' },
+            mellemstor: { definition: 'Byer med 10.000-50.000 indbyggere', prisscenarier: [{ titel: 'Lille projekt', beskrivelse: 'Standardopgave med normal adgang.', detaljer: 'Mellemstor', pris_low: 10000, pris_high: 22000 }, { titel: 'Mellemstort projekt', beskrivelse: 'Mellemstort projekt.', detaljer: 'Mellemstor', pris_low: 23000, pris_high: 45000 }, { titel: 'Stort projekt', beskrivelse: 'Kompleks opgave med flere delområder.', detaljer: 'Mellemstor', pris_low: 45000, pris_high: 90000 }], ekstra_sektioner: ['goer_det_selv_intro'], intro_variant_pool: 'B' },
+            mindre: { definition: 'Byer med under 10.000 indbyggere', prisscenarier: [{ titel: 'Lille projekt', beskrivelse: 'Lille opgave med god plads til udførsel.', detaljer: 'Mindre', pris_low: 9000, pris_high: 18000 }, { titel: 'Mellemstort projekt', beskrivelse: 'Mellemstort projekt med mulig ekstra kørsel.', detaljer: 'Mindre', pris_low: 20000, pris_high: 40000 }, { titel: 'Stort projekt', beskrivelse: 'Stort projekt på større grund.', detaljer: 'Mindre', pris_low: 39000, pris_high: 82000 }], ekstra_sektioner: ['goer_det_selv_fuld', 'transport_tillæg'], intro_variant_pool: 'C' }
+          }
+        };
+
+        const problemTemplates = [
+          `Hvad koster ${name} standard`, `Hvad koster ${name} premium`, `Hvad koster ${name} basis`, `${name} pris pr. ${pricing.enhed_kort}`,
+          `Billigste ${name}`, `Regler for ${name}`, `Kan jeg selv lave ${name}?`
+        ].map((emne, i) => ({
+          id: `${slug}-problem-${i + 1}`,
+          emne,
+          soegeord: emne.toLowerCase(),
+          soege_intention: i < 5 ? 'transactional' : 'informational',
+          slug_suffix: `${slug}-problem-${i + 1}`,
+          title: `${emne} — priser og guide 2026`,
+          h1: emne,
+          meta_description: `${name} typisk ${types[1].pris_pr_enhed_low}–${types[1].pris_pr_enhed_high} kr/${pricing.enhed_kort}. Se pris, regler og guide 2026.`,
+          sections: [1,2,3,4,5].map((n) => ({
+            heading: `${emne}: sektion ${n}`,
+            body: `${name} har typisk prisniveau ${types[0].pris_pr_enhed_low}–${types[3].pris_pr_enhed_high} kr/${pricing.enhed_kort}. Sammenlign tilbud på samme specifikation og adskil materialer, timer, transport og tillæg for at få det mest retvisende valg.\n\n${facts[n % facts.length]}`
+          })),
+          faq: [1,2,3,4].map((n) => ({ question: `${emne} — spørgsmål ${n}?`, answer: `${name} koster ofte ${types[1].pris_pr_enhed_low}–${types[1].pris_pr_enhed_high} kr/${pricing.enhed_kort}, men endelig pris afhænger af omfang og adgang.` }))
+        }));
+
+        return {
+          research: { source: 'browser-fallback', abstract: '', facts },
+          contentBank,
+          problemTemplates
+        };
+      }
+
+      async function generate() {
+        const keyword = document.getElementById('keyword').value.trim();
+        const apiBase = document.getElementById('apiBase').value.trim();
+        if (!keyword) return;
+        btn.disabled = true;
+        statusEl.className = 'status';
+        statusEl.textContent = 'Laver research og bygger JSON...';
+
+        const apiUrl = `${apiBase || ''}/api/generate`;
+        try {
+          const res = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ keyword })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Ukendt fejl');
+          document.getElementById('research').value = JSON.stringify(data.research, null, 2);
+          document.getElementById('contentBank').value = JSON.stringify(data.contentBank, null, 2);
+          document.getElementById('problemPages').value = JSON.stringify(data.problemTemplates, null, 2);
+          statusEl.className = 'status ok';
+          statusEl.textContent = 'Færdig via API: research + begge JSON outputs er genereret.';
+        } catch (e) {
+          const data = localGenerate(keyword);
+          document.getElementById('research').value = JSON.stringify(data.research, null, 2);
+          document.getElementById('contentBank').value = JSON.stringify(data.contentBank, null, 2);
+          document.getElementById('problemPages').value = JSON.stringify(data.problemTemplates, null, 2);
+          statusEl.className = 'status ok';
+          statusEl.textContent = `API utilgængelig (${e.message}). Fallback-generator er brugt, så appen virker også fra file://.`;
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      btn.addEventListener('click', generate);
+      document.getElementById('keyword').addEventListener('keydown', (e) => e.key === 'Enter' && generate());
+      document.getElementById('keyword').value = 'varmepumpe';
+      generate();
+    </script>
+  </body>
+</html>
